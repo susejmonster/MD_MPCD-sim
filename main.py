@@ -1,0 +1,58 @@
+
+from init_solvent import SOLVENT_main
+import hoomd
+import sys
+import importlib.metadata
+import matplotlib.pyplot as plt
+try:
+    import freud
+    import gsd
+    import numpy
+    
+    print(f"freud version: {freud.__version__}")
+    gsd_version = importlib.metadata.version("gsd")
+    print(f"gsd version: {gsd_version}")
+    print(f"gsd version: {numpy.__version__}")
+    
+    
+except ModuleNotFoundError as e:
+    # e.name contains the exact name of the missing module (e.g., 'freud' or 'gsd')
+    print(f"Error: Required module '{e.name}' is not installed in this environment.")
+    print("Please make sure you have added it via your package manager (e.g., 'pixi add').")
+    
+    # Gracefully exit the script with an error code
+    raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    sim2 = SOLVENT_main()
+    
+    gsd_writer = hoomd.write.GSD(
+        trigger=2000,
+        filename="sim_finish.gsd",
+        dynamic=["particles/position", "particles/image"],
+    )
+    sim2.operations.writers.append(gsd_writer)
+    sim2.run(200000)
+
+    print("simulation complete,opening writer")
+    sim2.operations.writers.remove(gsd_writer)
+    del gsd_writer
+
+    with gsd.hoomd.open("sim_finish.gsd") as traj:
+        num_frames = len(traj)
+        N = traj[0].particles.N
+        positions = numpy.zeros((num_frames, N, 3), dtype=float)
+        for i, snap in enumerate(traj):
+            box = freud.box.Box.from_box(snap.configuration.box)
+            positions[i] = box.unwrap(snap.particles.position, snap.particles.image)
+    print("WRITE complete, plotting")
+    
+    msd = freud.msd.MSD(box, mode="window")
+    msd.compute(positions)
+    msd.plot();
+
+    print("Plotting")
+    ax = msd.plot()
+    plt.savefig("./Renders/msd_plot.png", dpi=300, bbox_inches='tight')
+    print("MSD Plot successfully saved to ./Renders/msd_plot.png")
