@@ -8,6 +8,76 @@ from sim import render
 from init import SOLUTE_main
 
 
+class VicsekAlignmentForce(hoomd.md.force.Custom):
+    def __init__(self, nlist, r_cut, f_a, active_type_name="A"):
+        super().__init__(aniso=False)
+        self.nlist = nlist
+        self.r_cut = r_cut
+        self.f_a = f_a
+        self.active_type_name = active_type_name
+
+    def set_forces(self, timestep):
+        state = self._simulation.state
+        
+        # Cache the ID on the class instance so we only look it up once (performance tip!)
+        if not hasattr(self, "_active_type_id"):
+            if self.active_type_name in state.particle_types:
+                self._active_type_id = state.particle_types.index(self.active_type_name)
+            else:
+                self._active_type_id = None
+                
+        if self._active_type_id is None:
+            return
+
+        # Open context managers for snapshot, forces, AND the neighbor list
+        with state.cpu_local_snapshot as snap, \
+             self.cpu_local_force_arrays as arrays, \
+             self.nlist.cpu_local_nlist_arrays as nlist_arrays:
+            
+            vel = snap.particles.velocity
+            typeids = snap.particles.typeid
+            
+            # Initialize all force arrays to 0 first
+            arrays.force[:] = 0.0
+            arrays.torque[:] = 0.0
+            arrays.potential_energy[:] = 0.0
+            arrays.virial[:] = 0.0
+
+            active_indices = numpy.where(typeids == self._active_type_id)[0]
+            if len(active_indices) == 0:
+                return
+
+            # Access the correct neighbor list arrays
+            head_list = nlist_arrays.head_list
+            n_neigh = nlist_arrays.n_neigh
+            nlist = nlist_arrays.nlist
+
+            # Compute Vicsek alignment only for the active particle indices
+            for i in active_indices:
+                # Get the slice indices for particle i's neighbors
+                start = head_list[i]
+                end = start + n_neigh[i]
+                
+                # Fetch the exact neighbors for particle i
+                idx_neighbors = nlist[start:end]
+                
+                # Filter out ghost particles (indices beyond the local velocity array size)
+                idx_neighbors = idx_neighbors[idx_neighbors < len(vel)]
+
+                # The Vicsek rule starts with the particle's own velocity
+                v_sum = vel[i].copy()
+                
+                if len(idx_neighbors) > 0:
+                    v_sum += numpy.sum(vel[idx_neighbors], axis=0)
+
+                v_mag = numpy.linalg.norm(v_sum)
+                if v_mag > 0:
+                    n_hat = v_sum / v_mag
+                    # Apply the force vector to the active index position
+                    arrays.force[i] = self.f_a * n_hat
+
+
+
 def IC_SOLVENT():
     with gsd.hoomd.open("./Frames/Active_IC.gsd") as traj:
         snapshot = hoomd.Snapshot.from_gsd_frame(traj[0], hoomd.communicator.Communicator())
@@ -20,10 +90,9 @@ def IC_SOLVENT():
     assert box.Lx == box.Ly == box.Lz, "The simulation box is not cubic!"
     L = box.Lx  # Single side length of the cube
 
-    snapshot.mpcd.types = ["A"]
+    snapshot.mpcd.types = ["S"]
     snapshot.mpcd.N = numpy.round((10/sigma**3) * box.volume).astype(int)
 
-# Generate uniform positions inside a cube centered at (0,0,0) from -L/2 to L/2
     snapshot.mpcd.position[:] = rng.uniform(
         low=-L / 2, high=L / 2, size=(snapshot.mpcd.N, 3)
     )
@@ -33,7 +102,7 @@ def IC_SOLVENT():
     vel -= numpy.mean(vel, axis=0)
     snapshot.mpcd.velocity[:] = vel
     
-    return snapshot,snapshot.particles.position,snapshot.particles.orientation,snapshot.mpcd.N,L
+    return snapshot,snapshot.particles.position,snapshot.particles.orientation,snapshot.mpcd.N,L,sigma
 
 
 def IO_SOLVENT(pos,orient,L)->None:
@@ -48,7 +117,7 @@ def IO_SOLVENT(pos,orient,L)->None:
     
     
     frame.particles.typeid = [0] * N_solute
-    frame.particles.types = ["A"]
+    frame.particles.types = ["S"]
     frame.configuration.box = [L, L, L, 0, 0, 0]
     
    
@@ -60,7 +129,7 @@ def IO_SOLVENT(pos,orient,L)->None:
 
 
 def SOLVENT_main():
-    snap,pos,orient,N,L = IC_SOLVENT()
+    snap,pos,orient,N,L,sigma = IC_SOLVENT()
     IO_SOLVENT(pos,orient,L)
     
     
@@ -76,11 +145,37 @@ def SOLVENT_main():
         simulation.operations.integrator = integrator
 
         cell = hoomd.md.nlist.Cell(buffer=0.4)
+
+        # 1. ForceShiftedLJ Force Setup
+        fslj = hoomd.md.pair.ForceShiftedLJ(nlist=cell, default_r_cut=1.5)
+        fslj.params[("A", "A")] = dict(epsilon=1.0, sigma=1.0)
+        # Add dummy params for the disabled pairs
+        fslj.params[("A", "S")] = dict(epsilon=0.0, sigma=0.0)
+        fslj.params[("S", "S")] = dict(epsilon=0.0, sigma=0.0)
+        fslj.r_cut[("A", "S")] = False
+        fslj.r_cut[("S", "S")] = False
+        integrator.forces.append(fslj)
+        
+        # 2. WCA (Solute-Solvent) Force Setup
         wca = hoomd.md.pair.LJ(nlist=cell)
-        wca.params[("A", "A")] = dict(epsilon=1.0, sigma=1.0)
-        wca.r_cut[("A", "A")] = 2 ** (1.0 / 6.0)
+        wca.params[("A", "S")] = dict(epsilon=1.0, sigma=1.0)
+        # Add dummy params for the disabled pairs
+        wca.params[("A", "A")] = dict(epsilon=0.0, sigma=0.0)
+        wca.params[("S", "S")] = dict(epsilon=0.0, sigma=0.0)
+        wca.r_cut[("A", "S")] = 2 ** (1.0 / 6.0)
+        wca.r_cut[("A", "A")] = False
+        wca.r_cut[("S", "S")] = False
         integrator.forces.append(wca)
 
+        # 3. Custom Force Setup
+        vicsek_force = VicsekAlignmentForce(
+            nlist=cell, 
+            r_cut=1.5, 
+            f_a=2.0, 
+            active_type_name="A" 
+        )
+        integrator.forces.append(vicsek_force)
+        
         nve = hoomd.md.methods.ConstantVolume(filter=hoomd.filter.All())
         integrator.methods.append(nve)
 

@@ -4,6 +4,9 @@ import hoomd
 import sys
 import importlib.metadata
 import matplotlib.pyplot as plt
+from sim import render
+
+
 try:
     import freud
     import gsd
@@ -34,12 +37,18 @@ if __name__ == "__main__":
     )
     sim2.operations.writers.append(gsd_writer)
     sim2.run(200000)
+    snapshot = sim2.state.get_snapshot()
+    positions = snapshot.particles.position
+    orientations = snapshot.particles.orientation
+    box_length = snapshot.configuration.box
+    image_fin = render(positions,orientations,box_length)
+    image_fin.save("./Renders/final_image.png")
 
     print("simulation complete,opening writer")
     sim2.operations.writers.remove(gsd_writer)
     del gsd_writer
 
-    with gsd.hoomd.open("sim_finish.gsd") as traj:
+    with gsd.hoomd.open("./Frames/sim_finish.gsd") as traj:
         num_frames = len(traj)
         N = traj[0].particles.N
         positions = numpy.zeros((num_frames, N, 3), dtype=float)

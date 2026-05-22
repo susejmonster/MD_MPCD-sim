@@ -50,22 +50,19 @@ def IO(pos,orient,N,L)->None:
 
 def SOLUTE_main():
     try:
-        # 1. Generate the initial condition positions, orientations, etc.
+       
         pos, orient, N, L = IC()
-        
-        # 2. Run your file handling and rendering pipeline
         IO(pos, orient, N, L)
-        
         print("Solute initialization completed successfully!")
 
     except Exception as e:
         print(f"\n[Error] SOLUTE_main failed during execution!")
         print(f"Reason: {e}")
         print("-" * 50)
-        # This prints the exact line number and file where the crash happened
+        
         traceback.print_exc()
         print("-" * 50)
         
-        # Gracefully exit with a failure code
+        
         sys.exit(1)
 
