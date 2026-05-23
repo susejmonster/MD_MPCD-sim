@@ -3,6 +3,7 @@ import time
 import gsd.hoomd
 import os
 import freud
+import numpy as np
 
 def LOAD():
     trajectory_path = 'sim_finish.gsd'
@@ -38,12 +39,33 @@ def LOAD():
             ##load sim data
 
             ##compute clustering
+           
             cl = freud.cluster.Cluster()
             cl.compute(system=(box, positions), neighbors={'r_max': 1.2})
     
             print(f"Found {cl.num_clusters} clusters in this frame.")
+            
+            
+            cl_props = freud.cluster.ClusterProperties()
+            cl_props.compute(system=(box, positions), cluster_idx=cl.cluster_idx)
+            
+            cluster_sizes = cl_props.sizes
+                
+            M_a = 8
+            mass_dict = dict()
+   
             ##compute clustering
-            return 200
+            for cluster_id, size in enumerate(cluster_sizes):
+                
+                mass_dict[cluster_id] = [size / ((2**(1/6))**3)]
+            
+            
+            
+            masses = np.array(list(mass_dict.values()))
+            average_mass = np.mean(masses)
+            
+            
+            return {"A":mass_dict,"B":average_mass}
 
     except Exception as e:
         # error type
@@ -55,7 +77,9 @@ def LOAD():
    
 
 if __name__ == "__main__":
-    if LOAD() == 400:
+    res = LOAD()
+    if res == 400:
         print("Error Mod1")
     else:
-        print("success Mod1")
+        print("\nNormalized Cluster Masses Dictionary:")
+        print(res)

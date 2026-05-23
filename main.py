@@ -30,6 +30,7 @@ except ModuleNotFoundError as e:
 if __name__ == "__main__":
     sim2 = SOLVENT_main()
     
+    # --- Configure continuous data logging to GSD trajectory file ---
     gsd_writer = hoomd.write.GSD(
         trigger=2000,
         filename="sim_finish.gsd",
@@ -37,6 +38,10 @@ if __name__ == "__main__":
     )
     sim2.operations.writers.append(gsd_writer)
     sim2.run(200000)
+    # --- Configure continuous data logging to GSD trajectory file ---
+
+    # --- Generate and save a static 3D visualization image of the final frame ---
+    print("simulation complete,opening writer")
     snapshot = sim2.state.get_snapshot()
     positions = snapshot.particles.position
     orientations = snapshot.particles.orientation
@@ -44,10 +49,12 @@ if __name__ == "__main__":
     image_fin = render(positions,orientations,box_length)
     image_fin.save("./Renders/final_image.png")
 
-    print("simulation complete,opening writer")
+    print("simulation complete,deleting writer")
     sim2.operations.writers.remove(gsd_writer)
     del gsd_writer
+    # --- Generate and save a static 3D visualization image of the final frame ---
 
+    # --- Read back saved trajectory and unwrap coordinates for MSD calculation ---
     with gsd.hoomd.open("./Frames/sim_finish.gsd") as traj:
         num_frames = len(traj)
         N = traj[0].particles.N
@@ -56,10 +63,11 @@ if __name__ == "__main__":
             box = freud.box.Box.from_box(snap.configuration.box)
             positions[i] = box.unwrap(snap.particles.position, snap.particles.image)
     print("WRITE complete, plotting")
-    
+    # --- Read back saved trajectory and unwrap coordinates for MSD calculation --
+
+    # --- Compute Mean Squared Displacement (MSD) and save plot ---
     msd = freud.msd.MSD(box, mode="window")
     msd.compute(positions)
-    msd.plot();
 
     print("Plotting")
     ax = msd.plot()
