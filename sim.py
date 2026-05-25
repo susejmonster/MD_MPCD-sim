@@ -3,6 +3,8 @@ import fresnel
 import math
 import hoomd
 import numpy 
+import gsd.hoomd
+from PIL import Image
 
 def render(positions, orientations, box_length):
     """
@@ -26,7 +28,7 @@ def render(positions, orientations, box_length):
     )
     
     # 5. Add a subtle wireframe outline around the particles for depth
-    geometry.outline_width = 0.05
+    geometry.outline_width = 0.0
 
     # 6. Setup Scene Camera automatically based on the geometry
     scene.camera = fresnel.camera.Orthographic.fit(scene)
@@ -46,7 +48,67 @@ def render(positions, orientations, box_length):
     # Extract RGB channels (ignoring alpha channel)
     img = Image.fromarray(image[:, :, 0:3], mode='RGB')
     return img
+
+def render_gsd_animation(gsd_file, output_gif):
+    """
+    Reads a GSD trajectory and renders a 3D animated GIF using Fresnel.
+    """
+    # 1. Open the GSD trajectory
+    traj = gsd.hoomd.open(gsd_file, "r")
+    num_particles = traj[0].particles.N
+
+    # 2. Initialize the Fresnel scene
+    scene = fresnel.Scene()
+
+    # 3. Define particle geometry (Set up ONCE for the whole animation)
+    geometry = fresnel.geometry.Sphere(scene, N=num_particles)
+    geometry.radius[:] = [0.4] * num_particles
     
+    # 4. Apply material/color formatting
+    geometry.material = fresnel.material.Material(
+        color=fresnel.color.linear([0.2, 0.5, 0.8]),
+        roughness=0.3,
+        specular=0.5
+    )
+    geometry.outline_width = 0.0
+    
+    # 5. Apply standard directional lights
+    scene.lights = [
+        fresnel.light.Light(direction=[1, 1, 1], color=[0.9, 0.9, 0.9], theta=0),
+        fresnel.light.Light(direction=[-1, -1, 1], color=[0.3, 0.3, 0.3], theta=0)
+    ]
+
+    # Create a list to store the rendered frames
+    image_frames = []
+
+    # 6. Loop through each frame in the trajectory
+    print(f"Rendering {len(traj)} frames...")
+    for i, frame in enumerate(traj):
+        
+        # Update the particle positions for the current frame
+        geometry.position[:] = frame.particles.position
+        
+        # Fit the camera on the first frame so the zoom level stays consistent
+        if i == 0:
+            scene.camera = fresnel.camera.Orthographic.fit(scene)
+        
+        # Render the scene to a numpy array
+        image_array = fresnel.preview(scene, w=600, h=600)
+        
+        # Extract RGB channels and convert to Pillow Image
+        img = Image.fromarray(image_array[:, :, 0:3], mode='RGB')
+        image_frames.append(img)
+
+    # 7. Compile and save the animation as a GIF
+    if image_frames:
+        image_frames[0].save(
+            output_gif,
+            save_all=True,
+            append_images=image_frames[1:],
+            duration=100,  # Duration of each frame in milliseconds
+            loop=0         # 0 means the GIF will loop infinitely
+        )
+        print(f"Animation successfully saved to {output_gif}")
 
 
 m = 4

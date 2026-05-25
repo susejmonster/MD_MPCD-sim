@@ -19,7 +19,7 @@ class VicsekAlignmentForce(hoomd.md.force.Custom):
     def set_forces(self, timestep):
         state = self._simulation.state
         
-        # Cache the ID on the class instance so we only look it up once (performance tip!)
+        
         if not hasattr(self, "_active_type_id"):
             if self.active_type_name in state.particle_types:
                 self._active_type_id = state.particle_types.index(self.active_type_name)
@@ -29,7 +29,7 @@ class VicsekAlignmentForce(hoomd.md.force.Custom):
         if self._active_type_id is None:
             return
 
-        # Open context managers for snapshot, forces, AND the neighbor list
+        
         with state.cpu_local_snapshot as snap, \
              self.cpu_local_force_arrays as arrays, \
              self.nlist.cpu_local_nlist_arrays as nlist_arrays:
@@ -47,24 +47,18 @@ class VicsekAlignmentForce(hoomd.md.force.Custom):
             if len(active_indices) == 0:
                 return
 
-            # Access the correct neighbor list arrays
+            
             head_list = nlist_arrays.head_list
             n_neigh = nlist_arrays.n_neigh
             nlist = nlist_arrays.nlist
 
-            # Compute Vicsek alignment only for the active particle indices
+            
             for i in active_indices:
-                # Get the slice indices for particle i's neighbors
+                
                 start = head_list[i]
                 end = start + n_neigh[i]
-                
-                # Fetch the exact neighbors for particle i
                 idx_neighbors = nlist[start:end]
-                
-                # Filter out ghost particles (indices beyond the local velocity array size)
                 idx_neighbors = idx_neighbors[idx_neighbors < len(vel)]
-
-                # The Vicsek rule starts with the particle's own velocity
                 v_sum = vel[i].copy()
                 
                 if len(idx_neighbors) > 0:
@@ -73,7 +67,6 @@ class VicsekAlignmentForce(hoomd.md.force.Custom):
                 v_mag = numpy.linalg.norm(v_sum)
                 if v_mag > 0:
                     n_hat = v_sum / v_mag
-                    # Apply the force vector to the active index position
                     arrays.force[i] = self.f_a * n_hat
 
 
@@ -97,7 +90,7 @@ def IC_SOLVENT():
         low=-L / 2, high=L / 2, size=(snapshot.mpcd.N, 3)
     )
 
-# Velocities remain the same (Maxwell-Boltzmann distribution)
+
     vel = rng.normal(loc=0.0, scale=numpy.sqrt(kT), size=(snapshot.mpcd.N, 3))
     vel -= numpy.mean(vel, axis=0)
     snapshot.mpcd.velocity[:] = vel
@@ -106,10 +99,10 @@ def IC_SOLVENT():
 
 
 def IO_SOLVENT(pos,orient,L)->None:
-    # 1. Get the actual number of solute particles from the pos array
+    # --- 1. Get the actual number of solute particles from the pos array ---
     N_solute = len(pos)
     
-    # 2. Build the frame using N_solute
+    # --- 2. Build the frame using N_solute ---
     frame = gsd.hoomd.Frame()
     frame.particles.N = N_solute
     frame.particles.position = pos
@@ -146,7 +139,7 @@ def SOLVENT_main():
 
         cell = hoomd.md.nlist.Cell(buffer=0.4)
 
-        # 1. ForceShiftedLJ Force Setup
+        # --- 1. ForceShiftedLJ Force Setup ---
         fslj = hoomd.md.pair.ForceShiftedLJ(nlist=cell, default_r_cut=1.5)
         fslj.params[("A", "A")] = dict(epsilon=1.0, sigma=1.0)
         # Add dummy params for the disabled pairs
@@ -156,7 +149,7 @@ def SOLVENT_main():
         fslj.r_cut[("S", "S")] = False
         integrator.forces.append(fslj)
         
-        # 2. WCA (Solute-Solvent) Force Setup
+        # --- 2. WCA (Solute-Solvent) Force Setup ---
         wca = hoomd.md.pair.LJ(nlist=cell)
         wca.params[("A", "S")] = dict(epsilon=1.0, sigma=1.0)
         # Add dummy params for the disabled pairs
@@ -167,7 +160,7 @@ def SOLVENT_main():
         wca.r_cut[("S", "S")] = False
         integrator.forces.append(wca)
 
-        # 3. Custom Force Setup
+        # --- 3. Custom Force Setup ---
         vicsek_force = VicsekAlignmentForce(
             nlist=cell, 
             r_cut=1.5, 

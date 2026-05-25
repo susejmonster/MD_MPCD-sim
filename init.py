@@ -9,27 +9,24 @@ import sys
 import traceback
 
 def IC():
-    #setup the particle box
-    m = 4
-    N_particles = 2 * m**3
-    K = math.ceil(N_particles ** (1 / 3))
-    #setting particles in sphere->cube in periodic bounding box->cube
-    spacing = 1
-    rho = 0.578 #BS CAN BE USED HERE
     
-    for i in range(0,m):
-        if rho == K**3/K**3*spacing**3: #sigma fixed
-            break
-        spacing+=0.01
-    
-    L = math.ceil(K * spacing)
+    rho = 0.05 
+    L = 64 
+    N_particles = int(rho * (L**3)) 
+    K = math.ceil(N_particles ** (1 / 3)) 
+    spacing = L / K 
     x = numpy.linspace(-L / 2, L / 2, K, endpoint=False)
     position = list(itertools.product(x, repeat=3))
     
-    position = position[0:N_particles]
-    orientation = [(1, 0, 0, 0)] * N_particles
 
-    return position,orientation,N_particles,L
+    position = position[0:N_particles]
+    
+    # --- Randomize ---
+    random_quats = numpy.random.randn(N_particles, 4)
+    random_quats /= numpy.linalg.norm(random_quats, axis=1)[:, numpy.newaxis]
+    orientation = [tuple(q) for q in random_quats]
+
+    return position, orientation, N_particles, L
 
 def IO(pos,orient,N,L)->None:
         #handle file IO
